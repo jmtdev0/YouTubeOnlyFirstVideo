@@ -15,7 +15,7 @@ chrome.storage.sync.get(['middleMouseAction', 'rightMouseAction', 'showRedDot'],
 
 // Listen for messages from settings and content scripts
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    // Handle settings updates
+    // Handle settings updates from settings.js
     if (message.action === "updateMiddleMouseAction") {
         middleMouseAction = message.choice;
         console.log('Updated middle mouse action:', middleMouseAction);
@@ -31,6 +31,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             removeContextMenu();
             createContextMenu(currentPlaylistUrl);
         }
+        sendResponse({ success: true });
+        return true;
+    }
+    
+    if (message.action === "updateShowRedDot") {
+        showRedDot = message.value;
+        console.log('Updated show red dot:', showRedDot);
         sendResponse({ success: true });
         return true;
     }
@@ -60,12 +67,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             break;
             
         case 'GET_SETTINGS':
-            sendResponse({ 
-                middleMouseAction: middleMouseAction, 
-                rightMouseAction: rightMouseAction, 
-                showRedDot: showRedDot 
+            // Query chrome.storage directly instead of using local variables
+            chrome.storage.sync.get(['middleMouseAction', 'rightMouseAction', 'showRedDot'], function(result) {
+                sendResponse({ 
+                    middleMouseAction: result.middleMouseAction !== undefined ? result.middleMouseAction : 2,
+                    rightMouseAction: result.rightMouseAction !== undefined ? result.rightMouseAction : 0,
+                    showRedDot: result.showRedDot !== undefined ? result.showRedDot : true
+                });
             });
-            break;
+            return true; // Keep the message channel open for async response
             
         default:
             sendResponse({ success: false, error: 'Unknown message type' });
@@ -326,7 +336,7 @@ chrome.runtime.onInstalled.addListener(() => {
         }
         
         if (result.showRedDot === undefined) {
-            updates.showRedDot = true; // Default to showing red dot
+            updates.showRedDot = false; // Default to showing red dot
         }
         
         if (Object.keys(updates).length > 0) {

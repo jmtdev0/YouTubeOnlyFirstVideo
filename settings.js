@@ -1,6 +1,21 @@
 // Wait for DOM to be fully loaded
 document.addEventListener('DOMContentLoaded', function() {
 
+    // Function to notify all YouTube tabs about setting changes
+    function notifyYouTubeTabs(settingType, value) {
+        chrome.tabs.query({url: ['*://www.youtube.com/*', '*://youtube.com/*']}, (tabs) => {
+            tabs.forEach(tab => {
+                chrome.tabs.sendMessage(tab.id, {
+                    type: 'SETTING_UPDATED',
+                    settingType: settingType,
+                    value: value
+                }).catch(() => {
+                    // Silent error handling - content script might not be loaded yet
+                });
+            });
+        });
+    }
+
     // Load settings
     chrome.storage.sync.get(['middleMouseAction', 'rightMouseAction', 'showRedDot'], function(result) {
         // Set middle mouse action dropdown
@@ -49,11 +64,14 @@ document.addEventListener('DOMContentLoaded', function() {
                 choice: choiceValue
             }, function(response) {
                 if (chrome.runtime.lastError) {
-                    console.error('Error sending middle mouse message:', chrome.runtime.lastError);
+                    console.error('Error sending middle mouse message to background:', chrome.runtime.lastError);
                 } else {
-                    console.log('Middle mouse message sent successfully:', response);
+                    console.log('Middle mouse message sent to background successfully:', response);
                 }
             });
+            
+            // Notify all YouTube tabs
+            notifyYouTubeTabs('middleMouseAction', choiceValue);
         });
     }
     
@@ -78,11 +96,14 @@ document.addEventListener('DOMContentLoaded', function() {
                 choice: choiceValue
             }, function(response) {
                 if (chrome.runtime.lastError) {
-                    console.error('Error sending right mouse message:', chrome.runtime.lastError);
+                    console.error('Error sending right mouse message to background:', chrome.runtime.lastError);
                 } else {
-                    console.log('Right mouse message sent successfully:', response);
+                    console.log('Right mouse message sent to background successfully:', response);
                 }
             });
+            
+            // Notify all YouTube tabs
+            notifyYouTubeTabs('rightMouseAction', choiceValue);
         });
     }
     
@@ -101,21 +122,20 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             });
             
-            // Send message to content script to update visual indicators
-            chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-                if (tabs[0] && tabs[0].url && tabs[0].url.includes('youtube.com')) {
-                    chrome.tabs.sendMessage(tabs[0].id, {
-                        action: "updateRedDotVisibility",
-                        showRedDot: showRedDot
-                    }, function(response) {
-                        if (chrome.runtime.lastError) {
-                            console.error('Error sending red dot message:', chrome.runtime.lastError);
-                        } else {
-                            console.log('Red dot message sent successfully:', response);
-                        }
-                    });
+            // Send message to background script
+            chrome.runtime.sendMessage({
+                action: "updateShowRedDot", 
+                value: showRedDot
+            }, function(response) {
+                if (chrome.runtime.lastError) {
+                    console.error('Error sending red dot message to background:', chrome.runtime.lastError);
+                } else {
+                    console.log('Red dot message sent to background successfully:', response);
                 }
             });
+            
+            // Notify all YouTube tabs
+            notifyYouTubeTabs('showRedDot', showRedDot);
         });
     }
 

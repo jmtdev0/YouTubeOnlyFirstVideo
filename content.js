@@ -1,24 +1,42 @@
 // Simple content script to track and mark playlist links
-let processedLinks = new Set();
 let observer = null;
 let showRedDot = false; // Default to NOT showing red dot
 let settingsLoaded = false; // Track if settings are loaded
 
-// Get initial settings from background script
-chrome.runtime.sendMessage({type: 'GET_SETTINGS'}, (response) => {
-  if (response && response.showRedDot !== undefined) {
-    showRedDot = response.showRedDot;
-  }
+// Get initial settings directly from chrome.storage
+chrome.storage.sync.get(['showRedDot'], (result) => {
+  showRedDot = result.showRedDot !== undefined ? result.showRedDot : false;
   settingsLoaded = true;
   // Update visibility after settings are loaded
   updateRedDotVisibility();
+  // Also trigger initial scan now that settings are loaded
+  markPlaylistLinks();
 });
 
-// Listen for messages from settings popup
+// Listen for messages from background script (settings updates)
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // Handle direct settings updates from popup
   if (message.action === "updateRedDotVisibility") {
     showRedDot = message.showRedDot;
     updateRedDotVisibility();
+    sendResponse({ success: true });
+    return true;
+  }
+  
+  // Handle settings updates from background script
+  if (message.type === 'SETTING_UPDATED') {
+    switch (message.settingType) {
+      case 'showRedDot':
+        showRedDot = message.value;
+        updateRedDotVisibility();
+        break;
+      case 'middleMouseAction':
+        // No need to do anything here, the background script handles it
+        break;
+      case 'rightMouseAction':
+        // No need to do anything here, the background script handles it
+        break;
+    }
     sendResponse({ success: true });
     return true;
   }
@@ -63,32 +81,63 @@ function sendMessageToBackground(type, url) {
 
 // Function to add hover listeners to a link
 function addHoverListeners(link) {
-  const originalUrl = link.getAttribute('data-original-url');
   
   // Add mouseenter event (hover in)
   link.addEventListener('mouseenter', () => {
-    sendMessageToBackground('PLAYLIST_HOVER_IN', originalUrl);
+    // Get URL directly from the element
+    const href = link.getAttribute('href');
+    if (!href) return;
+    
+    const decodedHref = href.replace(/&amp;/g, '&');
+    const fullUrl = decodedHref.startsWith('http') ? decodedHref : `https://www.youtube.com${decodedHref}`;
+    
+    sendMessageToBackground('PLAYLIST_HOVER_IN', fullUrl);
   });
   
   // Add mouseleave event (hover out)
   link.addEventListener('mouseleave', () => {
-    sendMessageToBackground('PLAYLIST_HOVER_OUT', originalUrl);
+    // Get URL directly from the element
+    const href = link.getAttribute('href');
+    if (!href) return;
+    
+    const decodedHref = href.replace(/&amp;/g, '&');
+    const fullUrl = decodedHref.startsWith('http') ? decodedHref : `https://www.youtube.com${decodedHref}`;
+    
+    sendMessageToBackground('PLAYLIST_HOVER_OUT', fullUrl);
   });
 }
 
 // Function to add middle mouse button listener
 function addMiddleMouseListener(link) {
-  const originalUrl = link.getAttribute('data-original-url');
   
   link.addEventListener('mousedown', (event) => {
     // Check if it's the middle mouse button (button 1)
     if (event.button === 1) {
-      // Prevent default behavior (opening new tab)
-      event.preventDefault();
-      event.stopPropagation();
+      // Obtain URL directly from the clicked element
+      const currentTarget = event.currentTarget;
+      const href = currentTarget.getAttribute('href');
       
-      // Send message to background script to handle the action
-      sendMessageToBackground('MIDDLE_MOUSE_CLICK', originalUrl);
+      if (!href) {
+        console.warn('No href found on clicked element');
+        return;
+      }
+      
+      // Process the URL the same way as in markPlaylistLinks
+      const decodedHref = href.replace(/&amp;/g, '&');
+      const fullUrl = decodedHref.startsWith('http') ? decodedHref : `https://www.youtube.com${decodedHref}`;
+      
+      // Verify it's still a playlist link
+      if (isPlaylistLink(fullUrl)) {
+        // Prevent default behavior (opening new tab)
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        
+        // Send message to background script to handle the action
+        sendMessageToBackground('MIDDLE_MOUSE_CLICK', fullUrl);
+        
+        console.log('Middle mouse click handled for URL:', fullUrl);
+      }
       
       return false;
     }
@@ -99,6 +148,7 @@ function addMiddleMouseListener(link) {
     if (event.button === 1) {
       event.preventDefault();
       event.stopPropagation();
+      event.stopImmediatePropagation();
       return false;
     }
   });
@@ -108,6 +158,7 @@ function addMiddleMouseListener(link) {
     if (event.button === 1) {
       event.preventDefault();
       event.stopPropagation();
+      event.stopImmediatePropagation();
       return false;
     }
   });
@@ -120,8 +171,8 @@ function markPlaylistLinks() {
     return;
   }
   
-  // Find all <a> elements with href containing youtube.com/watch
-  const links = document.querySelectorAll('a[href*="youtube.com/watch"], a[href*="/watch"]');
+  // Find all <a> elements with href containing youtube.com/watch that haven't been processed yet
+  const links = document.querySelectorAll('a[href*="youtube.com/watch"]:not([data-playlist-link]), a[href*="/watch"]:not([data-playlist-link])');
   
   let markedCount = 0;
   
@@ -133,8 +184,8 @@ function markPlaylistLinks() {
     const decodedHref = href.replace(/&amp;/g, '&');
     const fullUrl = decodedHref.startsWith('http') ? decodedHref : `https://www.youtube.com${decodedHref}`;
     
-    // Check if it's a playlist link and hasn't been processed yet
-    if (isPlaylistLink(fullUrl) && !processedLinks.has(fullUrl)) {
+    // Check if it's a playlist link
+    if (isPlaylistLink(fullUrl)) {
       // Mark the link with a data attribute
       link.setAttribute('data-playlist-link', 'true');
       link.setAttribute('data-original-url', fullUrl);
@@ -162,8 +213,6 @@ function markPlaylistLinks() {
       // Add middle mouse button listener
       addMiddleMouseListener(link);
       
-      // Add to processed set
-      processedLinks.add(fullUrl);
       markedCount++;
     }
   });
@@ -223,7 +272,6 @@ const checkUrlChange = () => {
     // Clean up context menu when navigating
     sendMessageToBackground('CLEANUP', currentUrl);
     
-    processedLinks.clear();
     setTimeout(startMonitoring, 1000);
   }
 };
@@ -234,7 +282,6 @@ setInterval(checkUrlChange, 500);
 // Listen for YouTube's navigation events
 document.addEventListener('yt-navigate-finish', () => {
   sendMessageToBackground('CLEANUP', window.location.href);
-  processedLinks.clear();
   setTimeout(startMonitoring, 1000);
 });
 
