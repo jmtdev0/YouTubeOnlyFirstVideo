@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "YouTube Only First Video",
   "version": "1.0",
-  "description": "Adds right-click option to open YouTube videos without playlist.",
+  "description": "Adds options to open only the first video from YouTube playlist links, without loading the full playlist.",
   "permissions": [
     "contextMenus",
     "tabs",
