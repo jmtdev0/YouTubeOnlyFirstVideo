@@ -17,7 +17,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // Load settings
-    chrome.storage.sync.get(['middleMouseAction', 'rightMouseAction', 'showRedDot'], function(result) {
+    chrome.storage.sync.get(['middleMouseAction', 'rightMouseAction'], function(result) {
         // Set middle mouse action dropdown
         const middleMouseSelect = document.getElementById('middleMouseAction');
         if (middleMouseSelect && result.middleMouseAction !== undefined) {
@@ -35,19 +35,13 @@ document.addEventListener('DOMContentLoaded', function() {
             // Default to "All options in submenu" (value 0)
             rightMouseSelect.value = '0';
         }
-        
-        // Set red dot checkbox
-        const showRedDotCheckbox = document.getElementById('showRedDot');
-        if (showRedDotCheckbox) {
-            showRedDotCheckbox.checked = result.showRedDot !== undefined ? result.showRedDot : true;
-        }
     });
     
     // Add event listener to middle mouse dropdown
     const middleMouseSelect = document.getElementById('middleMouseAction');
     if (middleMouseSelect) {
         middleMouseSelect.addEventListener('change', function() {
-            const choiceValue = parseInt(this.value);
+            const choiceValue = this.value === 'disabled' ? 'disabled' : parseInt(this.value);
             
             // Save the new choice to storage
             chrome.storage.sync.set({'middleMouseAction': choiceValue}, function() {
@@ -104,38 +98,6 @@ document.addEventListener('DOMContentLoaded', function() {
             
             // Notify all YouTube tabs
             notifyYouTubeTabs('rightMouseAction', choiceValue);
-        });
-    }
-    
-    // Add event listener to red dot checkbox
-    const showRedDotCheckbox = document.getElementById('showRedDot');
-    if (showRedDotCheckbox) {
-        showRedDotCheckbox.addEventListener('change', function() {
-            const showRedDot = this.checked;
-            
-            // Save the new setting to storage
-            chrome.storage.sync.set({'showRedDot': showRedDot}, function() {
-                if (chrome.runtime.lastError) {
-                    console.error('Error saving red dot settings:', chrome.runtime.lastError);
-                } else {
-                    console.log('Red dot settings saved successfully:', showRedDot);
-                }
-            });
-            
-            // Send message to background script
-            chrome.runtime.sendMessage({
-                action: "updateShowRedDot", 
-                value: showRedDot
-            }, function(response) {
-                if (chrome.runtime.lastError) {
-                    console.error('Error sending red dot message to background:', chrome.runtime.lastError);
-                } else {
-                    console.log('Red dot message sent to background successfully:', response);
-                }
-            });
-            
-            // Notify all YouTube tabs
-            notifyYouTubeTabs('showRedDot', showRedDot);
         });
     }
 

@@ -1,16 +1,16 @@
+importScripts('start_scripts.js');
+
 // Background script for YouTube Direct Video extension
 let currentPlaylistUrl = null;
 let contextMenuId = null;
 let middleMouseAction = 2; // Default to "Open in new tab"
 let rightMouseAction = 0; // Default to "All options in submenu"
-let showRedDot = true; // Default to showing red dot
 
 // Load user preferences on startup
-chrome.storage.sync.get(['middleMouseAction', 'rightMouseAction', 'showRedDot'], function(result) {
+chrome.storage.sync.get(['middleMouseAction', 'rightMouseAction'], function(result) {
     middleMouseAction = result.middleMouseAction !== undefined ? result.middleMouseAction : 2;
     rightMouseAction = result.rightMouseAction !== undefined ? result.rightMouseAction : 0;
-    showRedDot = result.showRedDot !== undefined ? result.showRedDot : true;
-    console.log('Loaded user preferences:', { middleMouseAction, rightMouseAction, showRedDot });
+    console.log('Loaded user preferences:', { middleMouseAction, rightMouseAction });
 });
 
 // Listen for messages from settings and content scripts
@@ -31,13 +31,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             removeContextMenu();
             createContextMenu(currentPlaylistUrl);
         }
-        sendResponse({ success: true });
-        return true;
-    }
-    
-    if (message.action === "updateShowRedDot") {
-        showRedDot = message.value;
-        console.log('Updated show red dot:', showRedDot);
         sendResponse({ success: true });
         return true;
     }
@@ -68,11 +61,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             
         case 'GET_SETTINGS':
             // Query chrome.storage directly instead of using local variables
-            chrome.storage.sync.get(['middleMouseAction', 'rightMouseAction', 'showRedDot'], function(result) {
+            chrome.storage.sync.get(['middleMouseAction', 'rightMouseAction'], function(result) {
                 sendResponse({ 
                     middleMouseAction: result.middleMouseAction !== undefined ? result.middleMouseAction : 2,
-                    rightMouseAction: result.rightMouseAction !== undefined ? result.rightMouseAction : 0,
-                    showRedDot: result.showRedDot !== undefined ? result.showRedDot : true
+                    rightMouseAction: result.rightMouseAction !== undefined ? result.rightMouseAction : 0
                 });
             });
             return true; // Keep the message channel open for async response
@@ -313,10 +305,9 @@ function extractVideoId(url) {
 chrome.runtime.onStartup.addListener(() => {
     removeContextMenu();
     // Reload user preferences
-    chrome.storage.sync.get(['middleMouseAction', 'rightMouseAction', 'showRedDot'], function(result) {
+    chrome.storage.sync.get(['middleMouseAction', 'rightMouseAction'], function(result) {
         middleMouseAction = result.middleMouseAction !== undefined ? result.middleMouseAction : 2;
         rightMouseAction = result.rightMouseAction !== undefined ? result.rightMouseAction : 0;
-        showRedDot = result.showRedDot !== undefined ? result.showRedDot : true;
     });
 });
 
@@ -324,7 +315,7 @@ chrome.runtime.onStartup.addListener(() => {
 chrome.runtime.onInstalled.addListener(() => {
     removeContextMenu();
     // Set default options if not set
-    chrome.storage.sync.get(['middleMouseAction', 'rightMouseAction', 'showRedDot'], function(result) {
+    chrome.storage.sync.get(['middleMouseAction', 'rightMouseAction'], function(result) {
         const updates = {};
         
         if (result.middleMouseAction === undefined) {
@@ -335,20 +326,14 @@ chrome.runtime.onInstalled.addListener(() => {
             updates.rightMouseAction = 0; // Default to "All options in submenu"
         }
         
-        if (result.showRedDot === undefined) {
-            updates.showRedDot = false; // Default to showing red dot
-        }
-        
         if (Object.keys(updates).length > 0) {
             chrome.storage.sync.set(updates, function() {
                 middleMouseAction = result.middleMouseAction !== undefined ? result.middleMouseAction : 2;
                 rightMouseAction = result.rightMouseAction !== undefined ? result.rightMouseAction : 0;
-                showRedDot = result.showRedDot !== undefined ? result.showRedDot : true;
             });
         } else {
             middleMouseAction = result.middleMouseAction;
             rightMouseAction = result.rightMouseAction;
-            showRedDot = result.showRedDot;
         }
     });
 });

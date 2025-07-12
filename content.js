@@ -1,37 +1,21 @@
 // Simple content script to track and mark playlist links
 let observer = null;
-let showRedDot = false; // Default to NOT showing red dot
-let settingsLoaded = false; // Track if settings are loaded
+let middleMouseAction = 2; // Default to "Open in new tab"
 
-// Get initial settings directly from chrome.storage
-chrome.storage.sync.get(['showRedDot'], (result) => {
-  showRedDot = result.showRedDot !== undefined ? result.showRedDot : false;
-  settingsLoaded = true;
-  // Update visibility after settings are loaded
-  updateRedDotVisibility();
-  // Also trigger initial scan now that settings are loaded
-  markPlaylistLinks();
+// Load initial settings
+chrome.storage.sync.get(['middleMouseAction'], function(result) {
+  if (result.middleMouseAction !== undefined) {
+    middleMouseAction = result.middleMouseAction;
+  }
 });
 
 // Listen for messages from background script (settings updates)
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  // Handle direct settings updates from popup
-  if (message.action === "updateRedDotVisibility") {
-    showRedDot = message.showRedDot;
-    updateRedDotVisibility();
-    sendResponse({ success: true });
-    return true;
-  }
-  
   // Handle settings updates from background script
   if (message.type === 'SETTING_UPDATED') {
     switch (message.settingType) {
-      case 'showRedDot':
-        showRedDot = message.value;
-        updateRedDotVisibility();
-        break;
       case 'middleMouseAction':
-        // No need to do anything here, the background script handles it
+        middleMouseAction = message.value;
         break;
       case 'rightMouseAction':
         // No need to do anything here, the background script handles it
@@ -41,14 +25,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 });
-
-// Function to update red dot visibility
-function updateRedDotVisibility() {
-  const markers = document.querySelectorAll('.playlist-marker');
-  markers.forEach(marker => {
-    marker.style.display = showRedDot ? 'inline-block' : 'none';
-  });
-}
 
 // Function to check if a link is a YouTube playlist link
 function isPlaylistLink(url) {
@@ -64,12 +40,39 @@ function isPlaylistLink(url) {
   return hasWatch && hasList;
 }
 
+// Function to check if URL needs getCorrectVideoUrl treatment
+// Only for URLs where list= appears before v= (like list=RDMM&v=...)
+function needsUrlCorrection(url) {
+  if (!url) return false;
+  
+  const normalizedUrl = url.startsWith('http') ? url : `https://www.youtube.com${url}`;
+  
+  // Find positions of list= and v= parameters
+  const listPosition = normalizedUrl.indexOf('list=');
+  const vPosition = normalizedUrl.indexOf('v=');
+  
+  // Only needs correction if:
+  // 1. Both list= and v= exist
+  // 2. list= appears before v=
+  // 3. It's a watch URL
+  return listPosition !== -1 && 
+         vPosition !== -1 && 
+         listPosition < vPosition && 
+         normalizedUrl.includes('youtube.com/watch');
+}
+
 // Function to send message to background script
-function sendMessageToBackground(type, url) {
+function sendMessageToBackground(type, url, linkElement = null) {
   if (chrome.runtime && chrome.runtime.sendMessage) {
+    // Apply URL correction if needed and linkElement is provided
+    let finalUrl = url;
+    if (linkElement && needsUrlCorrection(url)) {
+      finalUrl = getCorrectVideoUrl(linkElement, url);
+    }
+    
     chrome.runtime.sendMessage({
       type: type,
-      url: url,
+      url: finalUrl,
       timestamp: Date.now()
     }, (response) => {
       if (chrome.runtime.lastError) {
@@ -91,7 +94,7 @@ function addHoverListeners(link) {
     const decodedHref = href.replace(/&amp;/g, '&');
     const fullUrl = decodedHref.startsWith('http') ? decodedHref : `https://www.youtube.com${decodedHref}`;
     
-    sendMessageToBackground('PLAYLIST_HOVER_IN', fullUrl);
+    sendMessageToBackground('PLAYLIST_HOVER_IN', fullUrl, link);
   });
   
   // Add mouseleave event (hover out)
@@ -103,8 +106,54 @@ function addHoverListeners(link) {
     const decodedHref = href.replace(/&amp;/g, '&');
     const fullUrl = decodedHref.startsWith('http') ? decodedHref : `https://www.youtube.com${decodedHref}`;
     
-    sendMessageToBackground('PLAYLIST_HOVER_OUT', fullUrl);
+    sendMessageToBackground('PLAYLIST_HOVER_OUT', fullUrl, link);
   });
+}
+
+// Function to extract video ID from thumbnail URL
+function extractVideoIdFromThumbnail(link) {
+  // Look for thumbnail images within the link
+  const thumbnailImg = link.querySelector('div[style*="background-image"]');
+  if (thumbnailImg) {
+    const style = thumbnailImg.getAttribute('style');
+    const urlMatch = style.match(/url\(["']?(https:\/\/i\.ytimg\.com\/vi\/([^\/]+)\/)/);
+    if (urlMatch && urlMatch[2]) {
+      return urlMatch[2];
+    }
+  }
+  
+  // Also check for regular img tags
+  const imgElement = link.querySelector('img[src*="ytimg.com/vi/"]');
+  if (imgElement) {
+    const src = imgElement.getAttribute('src');
+    const urlMatch = src.match(/\/vi\/([^\/]+)\//);
+    if (urlMatch && urlMatch[1]) {
+      return urlMatch[1];
+    }
+  }
+  
+  return null;
+}
+
+// Function to fix URL inconsistency between thumbnail and link
+function getCorrectVideoUrl(link, originalUrl) {
+  // Extract video ID from thumbnail
+  const thumbnailVideoId = extractVideoIdFromThumbnail(link);
+  
+  if (thumbnailVideoId) {
+    // Extract the current video ID from the URL
+    const urlMatch = originalUrl.match(/[?&]v=([^&]+)/);
+    const currentVideoId = urlMatch ? urlMatch[1] : null;
+    
+    // If thumbnail video ID is different from URL video ID, use the thumbnail one
+    if (currentVideoId && thumbnailVideoId !== currentVideoId) {
+      const correctedUrl = originalUrl.replace(/([?&]v=)[^&]+/, `$1${thumbnailVideoId}`);
+      console.log(`URL corrected: ${originalUrl} -> ${correctedUrl}`);
+      return correctedUrl;
+    }
+  }
+  
+  return originalUrl;
 }
 
 // Function to add middle mouse button listener
@@ -113,6 +162,11 @@ function addMiddleMouseListener(link) {
   link.addEventListener('mousedown', (event) => {
     // Check if it's the middle mouse button (button 1)
     if (event.button === 1) {
+      // If middle mouse action is disabled, allow default behavior
+      if (middleMouseAction === 'disabled') {
+        return; // Don't prevent default, let browser handle it
+      }
+      
       // Obtain URL directly from the clicked element
       const currentTarget = event.currentTarget;
       const href = currentTarget.getAttribute('href');
@@ -133,8 +187,8 @@ function addMiddleMouseListener(link) {
         event.stopPropagation();
         event.stopImmediatePropagation();
         
-        // Send message to background script to handle the action
-        sendMessageToBackground('MIDDLE_MOUSE_CLICK', fullUrl);
+        // Send message to background script to handle the action (URL correction handled in sendMessageToBackground)
+        sendMessageToBackground('MIDDLE_MOUSE_CLICK', fullUrl, currentTarget);
         
         console.log('Middle mouse click handled for URL:', fullUrl);
       }
@@ -143,9 +197,9 @@ function addMiddleMouseListener(link) {
     }
   });
   
-  // Also prevent the mouseup event to be extra sure
+  // Also prevent the mouseup event to be extra sure (only if not disabled)
   link.addEventListener('mouseup', (event) => {
-    if (event.button === 1) {
+    if (event.button === 1 && middleMouseAction !== 'disabled') {
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation();
@@ -153,9 +207,9 @@ function addMiddleMouseListener(link) {
     }
   });
   
-  // Prevent the auxclick event (fired on middle mouse button)
+  // Prevent the auxclick event (fired on middle mouse button) (only if not disabled)
   link.addEventListener('auxclick', (event) => {
-    if (event.button === 1) {
+    if (event.button === 1 && middleMouseAction !== 'disabled') {
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation();
@@ -166,11 +220,6 @@ function addMiddleMouseListener(link) {
 
 // Function to mark playlist links
 function markPlaylistLinks() {
-  // Don't mark links until settings are loaded
-  if (!settingsLoaded) {
-    return;
-  }
-  
   // Find all <a> elements with href containing youtube.com/watch that haven't been processed yet
   const links = document.querySelectorAll('a[href*="youtube.com/watch"]:not([data-playlist-link]), a[href*="/watch"]:not([data-playlist-link])');
   
@@ -186,26 +235,12 @@ function markPlaylistLinks() {
     
     // Check if it's a playlist link
     if (isPlaylistLink(fullUrl)) {
+      // Fix URL inconsistency between thumbnail and link before storing only for specific format
+      const correctedUrl = needsUrlCorrection(fullUrl) ? getCorrectVideoUrl(link, fullUrl) : fullUrl;
+      
       // Mark the link with a data attribute
       link.setAttribute('data-playlist-link', 'true');
-      link.setAttribute('data-original-url', fullUrl);
-      
-      // Add visual indicator only if user wants to see it
-      if (!link.querySelector('.playlist-marker')) {
-        const marker = document.createElement('span');
-        marker.className = 'playlist-marker';
-        marker.style.cssText = `
-          display: ${showRedDot ? 'inline-block' : 'none'};
-          width: 6px;
-          height: 6px;
-          background: #ff0000;
-          border-radius: 50%;
-          margin-left: 5px;
-          vertical-align: middle;
-        `;
-        marker.title = 'Playlist link detected';
-        link.appendChild(marker);
-      }
+      link.setAttribute('data-original-url', correctedUrl);
       
       // Add hover listeners
       addHoverListeners(link);
@@ -220,7 +255,7 @@ function markPlaylistLinks() {
 
 // Function to start monitoring for new links
 function startMonitoring() {
-  // Initial scan (will only work if settings are loaded)
+  // Initial scan
   markPlaylistLinks();
   
   // Set up observer for dynamic content
